@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life Sandbox</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --fg: #1d1d1b;
+    --muted: #6b6b66;
+    --cell: #1d1d1b;
+    --grid: #e2e2de;
+    --btn: #ffffff;
+    --border: #d0d0cb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414;
+      --fg: #ececec;
+      --muted: #9a9a9a;
+      --cell: #7ee0a1;
+      --grid: #232323;
+      --btn: #1f1f1f;
+      --border: #333;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 16px; margin: 0 12px 0 0; }
+  button, select {
+    font: inherit;
+    color: var(--fg);
+    background: var(--btn);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  #stats { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  main { flex: 1; position: relative; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="./" style="color:inherit;text-decoration:none">← SEED</a> · Sandbox</h1>
+  <button id="play">Play</button>
+  <button id="step">Step</button>
+  <button id="random">Random</button>
+  <button id="clear">Clear</button>
+  <label>Pattern
+    <select id="pattern">
+      <option value="">—</option>
+      <option value="glider">Glider</option>
+      <option value="lwss">Spaceship</option>
+      <option value="pulsar">Pulsar</option>
+      <option value="gosper">Glider gun</option>
+      <option value="rpent">R-pentomino</option>
+    </select>
+  </label>
+  <label>Speed <input id="speed" type="range" min="1" max="60" value="15"></label>
+  <span id="stats">Gen 0 · 0 alive</span>
+</header>
+<main><canvas id="board"></canvas></main>
+
+<script>
+const CELL = 10;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const $ = id => document.getElementById(id);
+
+let cols = 0, rows = 0, grid, next, gen = 0, running = false, lastTick = 0;
+
+const PATTERNS = {
+  glider: ['.O.', '..O', 'OOO'],
+  lwss: ['.O..O', 'O....', 'O...O', 'OOOO.'],
+  pulsar: [
+    '..OOO...OOO..', '.............', 'O....O.O....O', 'O....O.O....O',
+    'O....O.O....O', '..OOO...OOO..', '.............', '..OOO...OOO..',
+    'O....O.O....O', 'O....O.O....O', 'O....O.O....O', '.............',
+    '..OOO...OOO..'
+  ],
+  gosper: [
+    '........................O...........',
+    '......................O.O...........',
+    '............OO......OO............OO',
+    '...........O...O....OO............OO',
+    'OO........O.....O...OO..............',
+    'OO........O...O.OO....O.O...........',
+    '..........O.....O.......O...........',
+    '...........O...O....................',
+    '............OO......................'
+  ],
+  rpent: ['.OO', 'OO.', '.O.']
+};
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const { width, height } = canvas.getBoundingClientRect();
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const newCols = Math.max(1, Math.floor(width / CELL));
+  const newRows = Math.max(1, Math.floor(height / CELL));
+  const old = grid, oldCols = cols, oldRows = rows;
+  cols = newCols; rows = newRows;
+  grid = new Uint8Array(cols * rows);
+  next = new Uint8Array(cols * rows);
+  if (old) {
+    for (let y = 0; y < Math.min(rows, oldRows); y++)
+      for (let x = 0; x < Math.min(cols, oldCols); x++)
+        grid[y * cols + x] = old[y * oldCols + x];
+  }
+  draw();
+}
+
+function step() {
+  for (let y = 0; y < rows; y++) {
+    const up = ((y - 1 + rows) % rows) * cols;
+    const mid = y * cols;
+    const down = ((y + 1) % rows) * cols;
+    for (let x = 0; x < cols; x++) {
+      const l = (x - 1 + cols) % cols, r = (x + 1) % cols;
+      const n = grid[up + l] + grid[up + x] + grid[up + r]
+              + grid[mid + l] + grid[mid + r]
+              + grid[down + l] + grid[down + x] + grid[down + r];
+      const alive = grid[mid + x];
+      next[mid + x] = (n === 3 || (alive && n === 2)) ? 1 : 0;
+    }
+  }
+  [grid, next] = [next, grid];
+  gen++;
+  draw();
+}
+
+function draw() {
+  const css = getComputedStyle(document.documentElement);
+  const w = cols * CELL, h = rows * CELL;
+  ctx.fillStyle = css.getPropertyValue('--bg');
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = css.getPropertyValue('--grid');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= cols; x++) { ctx.moveTo(x * CELL + 0.5, 0); ctx.lineTo(x * CELL + 0.5, h); }
+  for (let y = 0; y <= rows; y++) { ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(w, y * CELL + 0.5); }
+  ctx.stroke();
+
+  ctx.fillStyle = css.getPropertyValue('--cell');
+  let alive = 0;
+  for (let i = 0; i < grid.length; i++) {
+    if (grid[i]) {
+      alive++;
+      ctx.fillRect((i % cols) * CELL + 1, Math.floor(i / cols) * CELL + 1, CELL - 1, CELL - 1);
+    }
+  }
+  $('stats').textContent = `Gen ${gen} · ${alive} alive`;
+}
+
+function loop(t) {
+  if (!running) return;
+  if (t - lastTick >= 1000 / $('speed').value) { lastTick = t; step(); }
+  requestAnimationFrame(loop);
+}
+
+function setRunning(on) {
+  running = on;
+  $('play').textContent = on ? 'Pause' : 'Play';
+  if (on) requestAnimationFrame(loop);
+}
+
+function placePattern(name) {
+  const p = PATTERNS[name];
+  if (!p) return;
+  const ox = Math.floor((cols - p[0].length) / 2);
+  const oy = Math.floor((rows - p.length) / 2);
+  p.forEach((row, y) => [...row].forEach((c, x) => {
+    const gx = ox + x, gy = oy + y;
+    if (c === 'O' && gx >= 0 && gy >= 0 && gx < cols && gy < rows) grid[gy * cols + gx] = 1;
+  }));
+  draw();
+}
+
+// Drawing with mouse / touch: first cell decides whether we paint or erase.
+let painting = null;
+function cellAt(e) {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / CELL);
+  const y = Math.floor((e.clientY - r.top) / CELL);
+  return (x >= 0 && y >= 0 && x < cols && y < rows) ? y * cols + x : -1;
+}
+canvas.addEventListener('pointerdown', e => {
+  const i = cellAt(e);
+  if (i < 0) return;
+  painting = grid[i] ? 0 : 1;
+  grid[i] = painting;
+  canvas.setPointerCapture(e.pointerId);
+  draw();
+});
+canvas.addEventListener('pointermove', e => {
+  if (painting === null) return;
+  const i = cellAt(e);
+  if (i >= 0 && grid[i] !== painting) { grid[i] = painting; draw(); }
+});
+canvas.addEventListener('pointerup', () => { painting = null; });
+canvas.addEventListener('pointercancel', () => { painting = null; });
+
+$('play').onclick = () => setRunning(!running);
+$('step').onclick = () => { setRunning(false); step(); };
+$('clear').onclick = () => { setRunning(false); grid.fill(0); gen = 0; draw(); };
+$('random').onclick = () => {
+  for (let i = 0; i < grid.length; i++) grid[i] = Math.random() < 0.25 ? 1 : 0;
+  gen = 0; draw();
+};
+$('pattern').onchange = e => { placePattern(e.target.value); e.target.value = ''; };
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); setRunning(!running); }
+  else if (e.key === 's') $('step').click();
+  else if (e.key === 'r') $('random').click();
+  else if (e.key === 'c') $('clear').click();
+});
+
+window.addEventListener('resize', resize);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+resize();
+$('random').click();
+</script>
+</body>
+</html>

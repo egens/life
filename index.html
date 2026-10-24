@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SEED — a daily Game of Life puzzle</title>
+<meta name="description" content="Plant a few cells. Let Conway's Game of Life grow them. Light every star. New puzzle every day.">
+<meta property="og:title" content="SEED 🌱 — daily Game of Life puzzle">
+<meta property="og:description" content="Plant a few cells. Let life grow. Light every star.">
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>">
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121922;
+    --line: #1f2a36;
+    --fg: #e8eef4;
+    --muted: #7d8b99;
+    --life: #5cf2a0;
+    --star: #ffd25e;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    user-select: none;
+  }
+  .app { width: 100%; max-width: 560px; padding: 8px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  button {
+    font: inherit; color: var(--fg); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; cursor: pointer; transition: transform .08s, border-color .15s, background .15s;
+  }
+  button:hover { border-color: #33475a; }
+  button:active { transform: scale(.96); }
+  button.on { border-color: var(--life); background: #13261e; }
+  button.primary { background: var(--life); color: #062014; border-color: var(--life); font-weight: 700; }
+  button.primary:hover { filter: brightness(1.08); }
+  button[hidden], [hidden] { display: none !important; }
+
+  header { display: flex; align-items: center; gap: 8px; }
+  .brand { font-weight: 800; font-size: 22px; letter-spacing: .08em; margin-right: auto; }
+  .brand small { font-weight: 500; font-size: 13px; letter-spacing: 0; color: var(--muted); margin-left: 6px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 10px; font-size: 13px; }
+  .icon { width: 36px; height: 36px; padding: 0; display: grid; place-items: center; }
+
+  .banner { background: #1d1a0c; border: 1px solid #4a3f12; color: #ffe7a3; border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+
+  .hud { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .hud span { padding: 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
+  .hud .full { color: var(--danger); }
+  .bump { animation: bump .35s; }
+  @keyframes bump { 40% { transform: scale(1.25); color: var(--star); } }
+
+  .board-wrap { display: flex; justify-content: center; }
+  canvas { display: block; border-radius: 12px; box-shadow: 0 0 0 1px var(--line); touch-action: none; cursor: crosshair; }
+  .shake { animation: shake .3s; }
+  @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .bar .grow { flex: 1; min-width: 120px; }
+  .tool { display: flex; align-items: center; gap: 6px; }
+  .tool svg { display: block; }
+
+  footer { text-align: center; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--muted); }
+
+  dialog {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(2px); }
+  dialog h2 { margin: 0 0 8px; }
+  dialog p { margin: 8px 0; color: #c6d0da; }
+  dialog .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  dialog .actions button { flex: 1; }
+  .score { font-size: 44px; font-weight: 800; text-align: center; margin: 4px 0 0; }
+  .rank { text-align: center; color: var(--star); font-weight: 700; margin-bottom: 4px; }
+  .stars-row { text-align: center; font-size: 20px; letter-spacing: 2px; }
+  .muted { color: var(--muted) !important; font-size: 14px; text-align: center; }
+  .vs { text-align: center; font-weight: 600; }
+  ol.rules { padding-left: 20px; color: #c6d0da; }
+  ol.rules li { margin: 6px 0; }
+  .toast {
+    position: fixed; left: 50%; top: 20px; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg); font-weight: 600; padding: 8px 14px; border-radius: 10px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">SEED<small id="puzzle-label"></small></div>
+    <div class="seg">
+      <button id="m-daily"></button>
+      <button id="m-endless"></button>
+    </div>
+    <button class="icon" id="sound" aria-label="sound">🔊</button>
+    <button class="icon" id="help" aria-label="help">?</button>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <div class="hud">
+    <span id="h-cells"></span>
+    <span id="h-stars"></span>
+    <span id="h-gen"></span>
+  </div>
+
+  <div class="board-wrap" id="wrap"><canvas id="board"></canvas></div>
+
+  <div class="bar" id="edit-bar">
+    <button class="tool" id="t-cell"></button>
+    <button class="tool" id="t-glider"></button>
+    <button id="rotate" aria-label="rotate">↻</button>
+    <button id="clear"></button>
+    <button class="primary grow" id="run"></button>
+  </div>
+  <div class="bar" id="run-bar" hidden>
+    <button id="pause"></button>
+    <button id="speed"></button>
+    <button id="skip"></button>
+    <button class="grow" id="edit"></button>
+  </div>
+
+  <footer><span id="hint"></span> · <a href="sandbox.html" id="sandbox-link"></a></footer>
+</div>
+
+<dialog id="result">
+  <div class="rank" id="r-rank"></div>
+  <div class="score" id="r-score"></div>
+  <div class="stars-row" id="r-stars"></div>
+  <p class="muted" id="r-reason"></p>
+  <p class="muted" id="r-best"></p>
+  <p class="vs" id="r-vs" hidden></p>
+  <p class="muted" id="r-next" hidden></p>
+  <div class="actions">
+    <button id="r-retry"></button>
+    <button class="primary" id="r-share"></button>
+  </div>
+  <div class="actions">
+    <button id="r-friend" hidden></button>
+    <button id="r-new" hidden></button>
+  </div>
+</dialog>
+
+<dialog id="help-dlg">
+  <h2>SEED 🌱</h2>
+  <ol class="rules" id="rules"></ol>
+  <p class="muted" id="help-tip"></p>
+  <div class="actions"><button class="primary" id="help-ok"></button></div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script src="core.js"></script>
+<script>
+'use strict';
+const C = SeedCore;
+const $ = id => document.getElementById(id);
+
+// ---------- i18n ----------
+const STR = {
+  en: {
+    daily: 'Daily', endless: 'Endless', archive: 'archive',
+    cell: 'Cell', glider: 'Glider', clear: 'Clear', run: 'Run ▶',
+    pause: '⏸', resume: '▶', skip: '⏭ End', edit: '✎ Edit seed',
+    speed: s => `${s}×`,
+    gen: (g, m) => `gen ${g}/${m}`,
+    hint: 'Space — run · R — rotate',
+    sandbox: 'Sandbox',
+    noSeeds: 'Out of seeds!', zoneOnly: 'Plant inside the green zone', emptySeed: 'Plant something first',
+    copied: 'Copied — paste it anywhere!',
+    retry: 'Try again', share: 'Share', friendSeed: "Show friend's seed", newLevel: 'Next level →',
+    reasons: {
+      win: 'PERFECT! Every star lit.',
+      dead: g => `The colony died out at gen ${g}.`,
+      stable: g => `The colony froze at gen ${g}.`,
+      time: g => `Time's up — ${g} generations.`
+    },
+    lastStar: g => `last star at gen ${g}`,
+    best: (l, g) => `Your best: ⭐ ${l}/10${l ? ` · gen ${g}` : ''}`,
+    tries: n => `${n} ${n === 1 ? 'try' : 'tries'}`,
+    streak: n => `🔥 streak ${n}`,
+    next: t => `Next daily SEED in ${t}`,
+    friendBanner: (l, g, p) => `A friend lit ⭐ ${l}/10 on ${p}${l ? ` by gen ${g}` : ''}. Can you beat it?`,
+    vsWin: '🎉 You beat your friend!', vsTie: '🤝 Dead even with your friend.', vsLose: (l) => `Friend is still ahead with ⭐ ${l}. Keep trying!`,
+    ranks: ['Barren', 'Sprout', 'Sprout', 'Sprout', 'Gardener', 'Gardener', 'Gardener', 'Life architect', 'Life architect', 'Almost a god', 'Conway is proud'],
+    rules: [
+      g => `Plant up to the allowed number of cells inside the <b>green zone</b>. Glider stamp helps.`,
+      g => `Press <b>Run</b>. From now on life is on its own: a cell with 2–3 neighbours survives, an empty cell with exactly 3 is born. Everything else dies.`,
+      g => `A <b>star</b> lights up when life comes within 2 cells of it. Light as many as you can in <b>${g}</b> generations. Walls are always dead.`,
+      g => `Ties go to whoever lit their last star sooner. Everyone gets the same puzzle each day — share your score and challenge friends.`
+    ],
+    tip: 'Tip: gliders fly diagonally. And there is a certain 5-cell shape that refuses to calm down…',
+    ok: "Let's grow"
+  },
+  ru: {
+    daily: 'День', endless: 'Без конца', archive: 'архив',
+    cell: 'Клетка', glider: 'Глайдер', clear: 'Очистить', run: 'Запуск ▶',
+    pause: '⏸', resume: '▶', skip: '⏭ В конец', edit: '✎ Править',
+    speed: s => `${s}×`,
+    gen: (g, m) => `пок. ${g}/${m}`,
+    hint: 'Пробел — запуск · R — поворот',
+    sandbox: 'Песочница',
+    noSeeds: 'Семена закончились!', zoneOnly: 'Сажать можно только в зелёной зоне', emptySeed: 'Сначала посади что-нибудь',
+    copied: 'Скопировано — вставляй куда хочешь!',
+    retry: 'Ещё раз', share: 'Поделиться', friendSeed: 'Посадка друга', newLevel: 'Следующий →',
+    reasons: {
+      win: 'ИДЕАЛЬНО! Все звёзды горят.',
+      dead: g => `Колония вымерла на поколении ${g}.`,
+      stable: g => `Колония застыла на поколении ${g}.`,
+      time: g => `Время вышло — ${g} поколений.`
+    },
+    lastStar: g => `последняя звезда на поколении ${g}`,
+    best: (l, g) => `Твой рекорд: ⭐ ${l}/10${l ? ` · пок. ${g}` : ''}`,
+    tries: n => `попыток: ${n}`,
+    streak: n => `🔥 серия ${n}`,
+    next: t => `Новый SEED через ${t}`,
+    friendBanner: (l, g, p) => `Друг зажёг ⭐ ${l}/10 в ${p}${l ? ` к поколению ${g}` : ''}. Сможешь лучше?`,
+    vsWin: '🎉 Ты обошёл друга!', vsTie: '🤝 Ровно как у друга.', vsLose: (l) => `Друг пока впереди с ⭐ ${l}. Пробуй ещё!`,
+    ranks: ['Пустыня', 'Росток', 'Росток', 'Росток', 'Садовник', 'Садовник', 'Садовник', 'Архитектор жизни', 'Архитектор жизни', 'Почти бог', 'Конвей гордится'],
+    rules: [
+      g => `Посади клетки в <b>зелёной зоне</b> — не больше, чем дано семян. Штамп «Глайдер» в помощь.`,
+      g => `Жми <b>Запуск</b>. Дальше жизнь сама: клетка с 2–3 соседями выживает, в пустой клетке с ровно 3 соседями рождается новая. Остальные умирают.`,
+      g => `<b>Звезда</b> загорается, когда жизнь подходит к ней на 2 клетки или ближе. Зажги как можно больше за <b>${g}</b> поколений. Стены всегда мертвы.`,
+      g => `При равенстве побеждает тот, кто зажёг последнюю звезду раньше. Пазл дня у всех одинаковый — делись результатом и вызывай друзей.`
+    ],
+    tip: 'Подсказка: глайдеры летят по диагонали. А ещё есть одна фигурка из 5 клеток, которая никак не может успокоиться…',
+    ok: 'Сажаем'
+  }
+};
+const T = STR[(navigator.language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en'];
+document.documentElement.lang = T === STR.ru ? 'ru' : 'en';
+
+// ---------- storage ----------
+const KEY = 'seed.v1';
+let store = { puzzles: {}, days: [], sound: true, helpSeen: false };
+try { Object.assign(store, JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} }
+function puzzleData(id) { return store.puzzles[id] || (store.puzzles[id] = { tries: 0, best: null, draft: '' }); }
+
+function streak() {
+  const days = new Set(store.days), today = C.dailyNumber();
+  let d = days.has(today) ? today : today - 1, n = 0;
+  while (days.has(d)) { n++; d--; }
+  return n;
+}
+
+// ---------- sound ----------
+let audio = null;
+function tone(freq, when = 0, dur = 0.18, type = 'sine', vol = 0.15) {
+  if (!store.sound) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime + when;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g).connect(audio.destination);
+    o.start(t); o.stop(t + dur);
+  } catch (e) {}
+}
+const SCALE = [523, 587, 659, 784, 880, 1047, 1175, 1319, 1568, 1760];
+const sfx = {
+  star: k => tone(SCALE[Math.min(k, 9)], 0, 0.35, 'triangle', 0.18),
+  place: () => tone(330, 0, 0.06, 'square', 0.04),
+  error: () => tone(140, 0, 0.2, 'sawtooth', 0.06),
+  win: () => [0, 2, 4, 5, 7, 9].forEach((k, i) => tone(SCALE[k], i * 0.09, 0.4, 'triangle', 0.16)),
+  end: () => tone(220, 0, 0.3, 'sine', 0.1)
+};
+
+// ---------- patterns ----------
+const GLIDER = [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2]];
+const ARROWS = ['↘', '↙', '↖', '↗'];
+function rotated(p, r) {
+  let q = p;
+  for (let k = 0; k < r; k++) q = q.map(([x, y]) => [-y, x]);
+  const mx = Math.min(...q.map(a => a[0])), my = Math.min(...q.map(a => a[1]));
+  return q.map(([x, y]) => [x - mx, y - my]);
+}
+function patternIcon(p, color = 'currentColor') {
+  const s = 5, w = Math.max(...p.map(a => a[0])) + 1, h = Math.max(...p.map(a => a[1])) + 1;
+  const rects = p.map(([x, y]) => `<rect x="${x * s}" y="${y * s}" width="${s - 1}" height="${s - 1}" rx="1" fill="${color}"/>`).join('');
+  return `<svg width="${w * s}" height="${h * s}" viewBox="0 0 ${w * s} ${h * s}">${rects}</svg>`;
+}
+
+// ---------- state ----------
+const canvas = $('board'), ctx = canvas.getContext('2d');
+const SPEEDS = [1, 2, 5];       // multipliers over BASE_GPS
+const BASE_GPS = 15;            // generations per second at 1×
+let level, levelId, seed = new Set();
+let mode = 'edit';              // edit | run | done
+let sim = null, paused = false, speedIdx = 1, acc = 0, lastT = 0;
+let tool = 'cell', rot = 0, hover = -1, painting = null;
+let heat = new Float32Array(C.W * C.H), particles = [], flash = [];
+let friend = null;              // { id, cells, result }
+let cs = 12;                    // cell size in CSS px
+
+function isDaily(id) { return id < C.ENDLESS_BASE; }
+function label(id) { return isDaily(id) ? `#${id}` : `∞${id - C.ENDLESS_BASE}`; }
+function randomEndless() { return C.ENDLESS_BASE + 1 + Math.floor(Math.random() * 899999); }
+
+function loadLevel(id) {
+  levelId = id;
+  level = C.makeLevel(id);
+  const data = puzzleData(id);
+  seed = new Set(C.decodeSeed(level, data.draft) || []);
+  mode = 'edit'; sim = null; heat.fill(0); particles = []; flash = [];
+  const today = C.dailyNumber();
+  $('puzzle-label').textContent = label(id) + (isDaily(id) && id !== today ? ` · ${T.archive}` : '');
+  $('m-daily').classList.toggle('on', isDaily(id));
+  $('m-endless').classList.toggle('on', !isDaily(id));
+  if (friend && friend.id !== id) { friend = null; $('banner').hidden = true; }
+  // Keep a friend's challenge link in the URL so a reload doesn't lose it.
+  const hash = friend ? location.hash : isDaily(id) && id === today ? '' : `#p=${id}`;
+  history.replaceState(null, '', location.pathname + location.search + hash);
+  syncUI();
+}
+
+function saveDraft() {
+  puzzleData(levelId).draft = seed.size ? C.encodeSeed(level, [...seed]) : '';
+  save();
+}
+
+// ---------- UI ----------
+function syncUI() {
+  const editing = mode === 'edit';
+  $('edit-bar').hidden = !editing;
+  $('run-bar').hidden = editing;
+  $('t-cell').classList.toggle('on', tool === 'cell');
+  $('t-glider').classList.toggle('on', tool === 'glider');
+  $('t-glider').innerHTML = `${patternIcon(rotated(GLIDER, rot))} ${T.glider} ${ARROWS[rot]}`;
+  $('rotate').disabled = tool !== 'glider';
+  $('pause').textContent = paused ? T.resume : T.pause;
+  $('pause').disabled = mode === 'done';
+  $('skip').disabled = mode === 'done';
+  $('speed').textContent = T.speed(SPEEDS[speedIdx]);
+  hud();
+}
+
+function hud() {
+  const cells = $('h-cells');
+  cells.textContent = `🌱 ${seed.size}/${level.budget}`;
+  cells.classList.toggle('full', mode === 'edit' && seed.size >= level.budget);
+  $('h-stars').textContent = `⭐ ${sim ? sim.litCount : 0}/${level.stars.length}`;
+  $('h-gen').textContent = T.gen(sim ? sim.gen : 0, level.maxGen);
+}
+
+function bump(el) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+function shake() { canvas.classList.remove('shake'); void canvas.offsetWidth; canvas.classList.add('shake'); sfx.error(); }
+let toastTimer;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+function resize() {
+  const wrap = $('wrap');
+  const reserved = document.querySelector('.app').offsetHeight - canvas.offsetHeight;
+  const avail = Math.min(wrap.clientWidth, window.innerHeight - reserved - 8);
+  cs = Math.max(6, Math.floor(avail / C.W));
+  const px = cs * C.W, dpr = window.devicePixelRatio || 1;
+  canvas.style.width = canvas.style.height = px + 'px';
+  canvas.width = canvas.height = px * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ---------- drawing ----------
+function starPath(cx, cy, r) {
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? r * 0.45 : r;
+    ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+  }
+  ctx.closePath();
+}
+
+function draw(t) {
+  const W = C.W, H = C.H, px = cs * W;
+  ctx.fillStyle = '#0b0f14';
+  ctx.fillRect(0, 0, px, px);
+
+  // dotted grid
+  ctx.fillStyle = '#18212b';
+  for (let y = 1; y < H; y++) for (let x = 1; x < W; x++) ctx.fillRect(x * cs - 0.5, y * cs - 0.5, 1, 1);
+
+  // zone
+  const z = level.zone;
+  ctx.fillStyle = mode === 'edit' ? 'rgba(92,242,160,0.09)' : 'rgba(92,242,160,0.04)';
+  ctx.fillRect(z.x * cs, z.y * cs, z.size * cs, z.size * cs);
+  ctx.strokeStyle = mode === 'edit' ? 'rgba(92,242,160,0.55)' : 'rgba(92,242,160,0.2)';
+  ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5;
+  ctx.strokeRect(z.x * cs + 0.75, z.y * cs + 0.75, z.size * cs - 1.5, z.size * cs - 1.5);
+  ctx.setLineDash([]);
+
+  // star reach areas while planning
+  const R = C.REACH;
+  if (mode === 'edit') {
+    ctx.fillStyle = 'rgba(255,210,94,0.06)';
+    for (const s of level.stars) ctx.fillRect((s.x - R) * cs, (s.y - R) * cs, (2 * R + 1) * cs, (2 * R + 1) * cs);
+  }
+
+  // trails
+  if (sim) {
+    for (let i = 0; i < heat.length; i++) {
+      if (heat[i] > 0.02) {
+        ctx.fillStyle = `rgba(92,242,160,${heat[i] * 0.22})`;
+        ctx.fillRect((i % W) * cs, Math.floor(i / W) * cs, cs, cs);
+      }
+    }
+  }
+
+  // walls
+  for (let i = 0; i < level.wall.length; i++) {
+    if (!level.wall[i]) continue;
+    const x = (i % W) * cs, y = Math.floor(i / W) * cs;
+    ctx.fillStyle = '#2b3542'; ctx.fillRect(x, y, cs, cs);
+    ctx.fillStyle = '#3a4757'; ctx.fillRect(x, y, cs, Math.max(2, cs * 0.25));
+  }
+
+  // stars
+  level.stars.forEach((s, k) => {
+    const cx = (s.x + 0.5) * cs, cy = (s.y + 0.5) * cs;
+    const lit = sim && sim.lit[k] >= 0;
+    if (lit) {
+      const pulse = 1 + 0.08 * Math.sin(t / 200 + k);
+      ctx.save();
+      ctx.shadowColor = '#ffd25e'; ctx.shadowBlur = cs * 1.5;
+      ctx.fillStyle = '#ffd25e';
+      starPath(cx, cy, cs * 1.25 * pulse); ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = 'rgba(255,210,94,0.75)'; ctx.lineWidth = 1.5;
+      ctx.fillStyle = 'rgba(255,210,94,0.12)';
+      starPath(cx, cy, cs * 1.05); ctx.fill(); ctx.stroke();
+    }
+  });
+
+  // live cells
+  ctx.fillStyle = '#5cf2a0';
+  const pad = cs > 8 ? 1 : 0;
+  if (sim) {
+    const g = sim.grid;
+    for (let i = 0; i < g.length; i++) if (g[i]) ctx.fillRect((i % W) * cs + pad, Math.floor(i / W) * cs + pad, cs - 2 * pad, cs - 2 * pad);
+  } else {
+    for (const i of seed) ctx.fillRect((i % W) * cs + pad, Math.floor(i / W) * cs + pad, cs - 2 * pad, cs - 2 * pad);
+  }
+
+  // placement ghost
+  if (mode === 'edit' && hover >= 0) {
+    const cells = stampCells(hover);
+    if (cells) {
+      const fresh = cells.filter(i => !seed.has(i)).length;
+      const ok = tool === 'cell' || seed.size + fresh <= level.budget;
+      ctx.fillStyle = ok ? 'rgba(92,242,160,0.35)' : 'rgba(255,107,107,0.4)';
+      for (const i of cells) ctx.fillRect((i % W) * cs + pad, Math.floor(i / W) * cs + pad, cs - 2 * pad, cs - 2 * pad);
+    }
+  }
+
+  // star flashes and particles
+  flash = flash.filter(f => (f.life -= 1) > 0);
+  for (const f of flash) {
+    ctx.strokeStyle = `rgba(255,210,94,${f.life / 30})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(f.x, f.y, (30 - f.life) * cs * 0.18 + cs, 0, Math.PI * 2); ctx.stroke();
+  }
+  particles = particles.filter(p => (p.life -= 1) > 0);
+  for (const p of particles) {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.vx *= 0.98;
+    ctx.fillStyle = `rgba(255,${180 + (p.life % 60)},94,${p.life / 50})`;
+    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+}
+
+function burst(k) {
+  const s = level.stars[k], x = (s.x + 0.5) * cs, y = (s.y + 0.5) * cs;
+  flash.push({ x, y, life: 30 });
+  for (let i = 0; i < 22; i++) {
+    const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 3;
+    particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 30 + Math.random() * 25 });
+  }
+}
+
+// ---------- planting ----------
+function cellAt(e) {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / cs), y = Math.floor((e.clientY - r.top) / cs);
+  return x >= 0 && y >= 0 && x < C.W && y < C.H ? y * C.W + x : -1;
+}
+
+// Cells a stamp would cover when aimed at cell i; stamps are shifted to fit inside the zone.
+function stampCells(i) {
+  const x = i % C.W, y = Math.floor(i / C.W), z = level.zone;
+  if (tool === 'cell') return C.inZone(level, x, y) ? [i] : null;
+  if (!C.inZone(level, x, y)) return null;
+  const p = rotated(GLIDER, rot);
+  const w = Math.max(...p.map(a => a[0])) + 1, h = Math.max(...p.map(a => a[1])) + 1;
+  const ox = Math.min(Math.max(x - (w >> 1), z.x), z.x + z.size - w);
+  const oy = Math.min(Math.max(y - (h >> 1), z.y), z.y + z.size - h);
+  return p.map(([dx, dy]) => (oy + dy) * C.W + ox + dx);
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (mode !== 'edit') return;
+  const i = cellAt(e);
+  if (i < 0) return;
+  const cells = stampCells(i);
+  if (!cells) { shake(); toast(T.zoneOnly); return; }
+  if (tool === 'cell') {
+    painting = !seed.has(i);
+    if (painting && seed.size >= level.budget) { shake(); toast(T.noSeeds); painting = null; return; }
+    painting ? seed.add(i) : seed.delete(i);
+    canvas.setPointerCapture(e.pointerId);
+  } else {
+    const fresh = cells.filter(c => !seed.has(c));
+    if (!fresh.length) cells.forEach(c => seed.delete(c));       // tapping an existing glider removes it
+    else if (seed.size + fresh.length > level.budget) { shake(); toast(T.noSeeds); return; }
+    else fresh.forEach(c => seed.add(c));
+  }
+  sfx.place();
+  saveDraft(); hud();
+});
+canvas.addEventListener('pointermove', e => {
+  hover = e.pointerType === 'mouse' ? cellAt(e) : -1;
+  if (painting === null || mode !== 'edit') return;
+  const i = cellAt(e);
+  if (i < 0 || !stampCells(i) || seed.has(i) === painting) return;
+  if (painting && seed.size >= level.budget) return;
+  painting ? seed.add(i) : seed.delete(i);
+  saveDraft(); hud();
+});
+canvas.addEventListener('pointerleave', () => { hover = -1; });
+['pointerup', 'pointercancel'].forEach(ev => canvas.addEventListener(ev, () => { painting = null; }));
+
+// ---------- running ----------
+function startRun() {
+  if (!seed.size) { shake(); toast(T.emptySeed); return; }
+  saveDraft();
+  sim = new C.Sim(level, [...seed]);
+  heat.fill(0);
+  for (const i of seed) heat[i] = 1;
+  mode = 'run'; paused = false; acc = 0;
+  const data = puzzleData(levelId); data.tries++; save();
+  syncUI();
+}
+
+function advance() {
+  const events = sim.step();
+  const g = sim.grid;
+  for (let i = 0; i < heat.length; i++) heat[i] = g[i] ? 1 : heat[i] * 0.9;
+  for (const k of events) { burst(k); sfx.star(sim.litCount - 1); bump($('h-stars')); }
+  if (sim.done) finishRun();
+}
+
+function finishRun() {
+  mode = 'done';
+  const res = sim.result();
+  const data = puzzleData(levelId);
+  const prevBest = data.best;
+  if (C.better(res, data.best)) data.best = { lit: res.lit, gen: res.gen, seed: C.encodeSeed(level, [...seed]) };
+  if (isDaily(levelId) && levelId === C.dailyNumber() && !store.days.includes(levelId)) store.days.push(levelId);
+  save();
+  res.lit === res.total ? sfx.win() : sfx.end();
+  syncUI();
+  setTimeout(() => showResult(res, prevBest), res.lit === res.total ? 900 : 500);
+}
+
+function editSeed() {
+  mode = 'edit'; sim = null; heat.fill(0); paused = false;
+  $('result').open && $('result').close();
+  syncUI();
+}
+
+// ---------- result & sharing ----------
+let lastResult = null, countdownTimer = null;
+
+function showResult(res, prevBest) {
+  if (mode !== 'done') return;
+  lastResult = res;
+  const data = puzzleData(levelId);
+  $('r-rank').textContent = T.ranks[res.lit];
+  $('r-score').textContent = `⭐ ${res.lit}/${res.total}`;
+  $('r-stars').textContent = '★'.repeat(res.lit) + '☆'.repeat(res.total - res.lit);
+  const reason = (res.reason === 'win' ? T.reasons.win : T.reasons[res.reason](res.endGen)).replace(/\.$/, '');
+  $('r-reason').textContent = reason + (res.lit ? ` · ${T.lastStar(res.gen)}` : '');
+  const extra = [T.tries(data.tries)];
+  if (isDaily(levelId) && levelId === C.dailyNumber()) extra.push(T.streak(streak()));
+  $('r-best').textContent = `${T.best(data.best.lit, data.best.gen)} · ${extra.join(' · ')}`;
+
+  if (friend) {
+    const f = friend.result;
+    const beat = C.better(data.best, f), lost = C.better(f, data.best);
+    $('r-vs').textContent = beat ? T.vsWin : lost ? T.vsLose(f.lit) : T.vsTie;
+    $('r-vs').hidden = false;
+  } else $('r-vs').hidden = true;
+  $('r-friend').hidden = !friend;
+  $('r-new').hidden = isDaily(levelId);
+
+  clearInterval(countdownTimer);
+  if (isDaily(levelId)) {
+    const tick = () => {
+      const now = new Date(), next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const s = Math.max(0, Math.floor((next - now) / 1000));
+      const hms = [s / 3600, s / 60 % 60, s % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':');
+      $('r-next').textContent = T.next(hms);
+    };
+    tick(); countdownTimer = setInterval(tick, 1000);
+    $('r-next').hidden = false;
+  } else $('r-next').hidden = true;
+
+  $('result').showModal();
+}
+
+// A 5×5 emoji map of the board: 🟩 zone, 🟨 all stars lit, 🟧 some lit, ⬜ none lit, ⬛ empty.
+function emojiMap(lit) {
+  const B = 8, n = C.W / B, z = level.zone;
+  const zc = [Math.floor((z.x + z.size / 2) / B), Math.floor((z.y + z.size / 2) / B)];
+  const rows = [];
+  for (let by = 0; by < n; by++) {
+    let row = '';
+    for (let bx = 0; bx < n; bx++) {
+      const here = level.stars.map((s, k) => [s, k]).filter(([s]) => Math.floor(s.x / B) === bx && Math.floor(s.y / B) === by);
+      const on = here.filter(([, k]) => lit[k] >= 0).length;
+      if (here.length) row += on === here.length ? '🟨' : on ? '🟧' : '⬜';
+      else row += bx === zc[0] && by === zc[1] ? '🟩' : '⬛';
+    }
+    rows.push(row);
+  }
+  return rows.join('\n');
+}
+
+async function share() {
+  const data = puzzleData(levelId), res = lastResult;
+  const url = `${location.origin}${location.pathname}#p=${levelId}&s=${C.encodeSeed(level, [...seed])}`;
+  const text = [
+    `SEED 🌱 ${label(levelId)} — ⭐ ${res.lit}/${res.total} «${T.ranks[res.lit]}»`,
+    emojiMap(sim.lit),
+    `${res.lit ? T.lastStar(res.gen) + ' · ' : ''}${T.tries(data.tries)}`,
+    url
+  ].join('\n');
+  try {
+    if (navigator.share && matchMedia('(pointer: coarse)').matches) { await navigator.share({ text }); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(text); toast(T.copied); }
+  catch (e) { prompt('', text); }
+}
+
+// ---------- main loop ----------
+function frame(t) {
+  const dt = Math.min(100, t - (lastT || t)); lastT = t;
+  if (mode === 'run' && !paused) {
+    acc += dt * BASE_GPS * SPEEDS[speedIdx] / 1000;
+    while (acc >= 1 && mode === 'run') { acc -= 1; advance(); }
+    hud();
+  }
+  draw(t);
+  requestAnimationFrame(frame);
+}
+
+// ---------- wiring ----------
+function setText() {
+  $('m-daily').textContent = T.daily;
+  $('m-endless').textContent = T.endless;
+  $('t-cell').innerHTML = `${patternIcon([[0, 0]])} ${T.cell}`;
+  $('clear').textContent = T.clear;
+  $('run').textContent = T.run;
+  $('skip').textContent = T.skip;
+  $('edit').textContent = T.edit;
+  $('hint').textContent = T.hint;
+  $('sandbox-link').textContent = T.sandbox;
+  $('r-retry').textContent = T.retry;
+  $('r-share').textContent = T.share + ' 📤';
+  $('r-friend').textContent = T.friendSeed;
+  $('r-new').textContent = T.newLevel;
+  $('help-ok').textContent = T.ok;
+  $('rules').innerHTML = T.rules.map(f => `<li>${f(C.MAX_GEN)}</li>`).join('');
+  $('help-tip').textContent = T.tip;
+  $('sound').textContent = store.sound ? '🔊' : '🔇';
+}
+
+$('t-cell').onclick = () => { tool = 'cell'; syncUI(); };
+$('t-glider').onclick = () => { if (tool === 'glider') rot = (rot + 1) % 4; tool = 'glider'; syncUI(); };
+$('rotate').onclick = () => { rot = (rot + 1) % 4; syncUI(); };
+$('clear').onclick = () => { seed.clear(); saveDraft(); hud(); };
+$('run').onclick = startRun;
+$('pause').onclick = () => { paused = !paused; syncUI(); };
+$('speed').onclick = () => { speedIdx = (speedIdx + 1) % SPEEDS.length; syncUI(); };
+$('skip').onclick = () => { while (mode === 'run') advance(); };
+$('edit').onclick = editSeed;
+$('m-daily').onclick = () => { $('result').close(); loadLevel(C.dailyNumber()); };
+$('m-endless').onclick = () => {
+  if (!isDaily(levelId)) return;
+  $('result').close(); loadLevel(store.endless || (store.endless = randomEndless())); save();
+};
+$('sound').onclick = () => { store.sound = !store.sound; save(); setText(); };
+$('help').onclick = () => $('help-dlg').showModal();
+$('help-ok').onclick = () => { $('help-dlg').close(); store.helpSeen = true; save(); };
+$('r-retry').onclick = editSeed;
+$('r-share').onclick = share;
+$('r-friend').onclick = () => { seed = new Set(friend.cells); saveDraft(); editSeed(); };
+$('r-new').onclick = () => { store.endless = randomEndless(); save(); $('result').close(); loadLevel(store.endless); };
+$('result').addEventListener('close', () => clearInterval(countdownTimer));
+$('result').addEventListener('click', e => { if (e.target === $('result')) $('result').close(); });
+
+document.addEventListener('keydown', e => {
+  if ($('result').open || $('help-dlg').open) return;
+  if (e.code === 'Space' || e.code === 'Enter') {
+    e.preventDefault();
+    if (mode === 'edit') startRun();
+    else if (mode === 'run') { paused = !paused; syncUI(); }
+    else editSeed();
+  } else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') { tool = 'glider'; rot = (rot + 1) % 4; syncUI(); }
+  else if (e.key === '1') { tool = 'cell'; syncUI(); }
+  else if (e.key === '2') { tool = 'glider'; syncUI(); }
+  else if (e.key === 'Escape' && mode !== 'edit') editSeed();
+});
+
+// ---------- boot ----------
+function boot() {
+  setText();
+  const params = new URLSearchParams(location.hash.slice(1));
+  const today = Math.max(1, C.dailyNumber());
+  let id = parseInt(params.get('p'), 10);
+  if (!(id >= 1 && (id <= today || (id > C.ENDLESS_BASE && id < C.ENDLESS_BASE * 10)))) id = today;
+
+  if (params.get('s')) {
+    const lvl = C.makeLevel(id), cells = C.decodeSeed(lvl, params.get('s'));
+    if (cells && cells.length) {
+      friend = { id, cells, result: C.run(lvl, cells) };
+      const r = friend.result;
+      $('banner').textContent = T.friendBanner(r.lit, r.gen, label(id));
+      $('banner').hidden = false;
+    }
+  }
+  loadLevel(id);
+  resize();
+  window.addEventListener('resize', resize);
+  requestAnimationFrame(frame);
+  if (!store.helpSeen) $('help-dlg').showModal();
+}
+boot();
+</script>
+</body>
+</html>
